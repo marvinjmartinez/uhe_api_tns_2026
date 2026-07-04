@@ -1,0 +1,10 @@
+{
+  "sourceAppDir": "E:\\Desarrollo Actual\\TNS-LOCAL\\tns-local-API\\apps\\api",
+  "installPath": "C:\\tns-local-api-service",
+  "serviceName": "TNSLocalAPI",
+  "serviceDisplayName": "TNS Local API Query Service",
+  "servicePort": 8086,
+  "envFile": ".env.api",
+  "envExampleFile": ".env.example",
+  "dbRelativePath": "data\\local-config-api.sqlite"
+}

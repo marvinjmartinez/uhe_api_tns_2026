@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Usuarios API - TNS Local</title>
+  <link rel="stylesheet" href="shared.css">
+  <script src="shared.js"></script>
+</head>
+<body>
+<nav></nav>
+<main>
+  <section class="page-hero">
+    <div class="hero-panel">
+      <div class="hero-kicker">Acceso API</div>
+      <h1>Usuarios y token JWT</h1>
+      <p>Administra los usuarios permitidos para iniciar sesion en la API y obtener el token con el que se autorizan las requests protegidas.</p>
+    </div>
+    <div class="side-panel stack">
+      <div><div class="muted">Base API</div><div class="mono" id="baseLabel">--</div></div>
+      <div><div class="muted">Usuario actual</div><div class="mono" id="currentUserLabel">--</div></div>
+    </div>
+  </section>
+
+  <section class="two-col">
+    <section class="panel">
+      <h2>Login</h2>
+      <form id="loginForm" class="form-stack">
+        <div class="form-grid">
+          <label>Email<input id="loginEmail" type="email" autocomplete="username" required></label>
+          <label>Clave<input id="loginPassword" type="password" autocomplete="current-password" required></label>
+        </div>
+        <div class="action-row">
+          <button type="submit" class="button-link">Obtener token</button>
+          <button type="button" class="button-secondary" onclick="clearStoredSession()">Limpiar token</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2>Token actual</h2>
+      <div class="token-banner" style="margin-bottom:0">
+        <label for="tokenInput">JWT Token</label>
+        <input id="tokenInput" type="password" placeholder="eyJhbGciOiJI..." />
+        <button onclick="saveToken()">Guardar</button>
+        <span id="tokenStatus"></span>
+      </div>
+    </section>
+  </section>
+
+  <div id="errorDiv" class="error-msg" style="display:none"></div>
+  <div id="successDiv" class="success-msg" style="display:none"></div>
+
+  <section class="panel">
+    <div class="panel-heading">
+      <h2>Pruebas y logs</h2>
+      <div class="action-row">
+        <select id="requestPath" class="inline-input">
+          <option value="/api/health">GET /api/health</option>
+          <option value="/api/connections">GET /api/connections</option>
+          <option value="/api/config/local">GET /api/config/local</option>
+          <option value="/api/metrics">GET /api/metrics</option>
+          <option value="/api/auth/users">GET /api/auth/users</option>
+          <option value="/api/auth/sessions">GET /api/auth/sessions</option>
+        </select>
+        <button type="button" class="button-secondary" onclick="runRequestTest()">Probar request</button>
+        <button type="button" class="button-secondary" onclick="logoutCurrentSession()">Cerrar mi sesion</button>
+        <button type="button" class="button-secondary" onclick="clearActivityLog()">Limpiar log</button>
+      </div>
+    </div>
+    <pre id="activityLog" class="code-block">Esperando acciones...</pre>
+  </section>
+
+  <section class="two-col">
+    <section class="panel">
+      <div class="panel-heading">
+        <h2>Usuarios autorizados</h2>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Email</th><th>Rol</th><th>Estado</th><th>Ultimo login</th><th>Acciones</th></tr></thead>
+          <tbody id="userRows"><tr><td colspan="5">Inicie sesion para administrar usuarios.</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2 id="userFormTitle">Nuevo usuario</h2>
+      <form id="userForm" class="form-stack">
+        <div class="form-grid">
+          <label>Email<input id="userEmail" type="email" autocomplete="username" required></label>
+          <label>Rol<input id="userRole" value="api" required></label>
+          <label>Estado
+            <select id="userActive">
+              <option value="true">Activo</option>
+              <option value="false">Inactivo</option>
+            </select>
+          </label>
+          <label>Clave<input id="userPassword" type="password" autocomplete="new-password" placeholder="Nueva clave o dejar vacio para conservar"></label>
+        </div>
+        <p class="muted">Al editar un usuario, puede cambiar su estado. Si deja la clave vacia, se conserva la actual.</p>
+        <div class="action-row">
+          <button type="submit" class="button-link">Guardar</button>
+          <button type="button" class="button-secondary" onclick="resetUserForm()">Nuevo</button>
+        </div>
+      </form>
+    </section>
+  </section>
+
+  <section class="panel">
+    <div class="panel-heading">
+      <h2>Sesiones activas</h2>
+      <div class="action-row">
+        <button type="button" class="button-secondary" onclick="loadSessions()">Refrescar sesiones</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Sesion</th><th>Email</th><th>Estado</th><th>Expira</th><th>Ultimo acceso</th><th>Acciones</th></tr></thead>
+        <tbody id="sessionRows"><tr><td colspan="6">Inicie sesion para ver sesiones.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+<script>
+  const BASE = resolveApiBase();
+  const ACTIVITY_LOG_KEY = 'tns_api_users_activity_log';
+  const MAX_LOG_CHARS = 24000;
+  let token = getStoredToken();
+  let editingUserEmail = null;
+  let userItems = [];
+  let sessionItems = [];
+
+  function loadPersistedActivityLog() {
+    try {
+      return localStorage.getItem(ACTIVITY_LOG_KEY) || '';
+    } catch {
+      return '';
+    }
+  }
+
+  function persistActivityLog(text) {
+    try {
+      localStorage.setItem(ACTIVITY_LOG_KEY, text);
+    } catch {}
+  }
+
+  function appendLog(title, payload) {
+    const box = document.getElementById('activityLog');
+    const stamp = new Date().toLocaleString('es-CO');
+    const serialized = typeof payload === 'string'
+      ? payload
+      : JSON.stringify(payload, null, 2);
+    const chunk = `[${stamp}] ${title}\n${serialized}\n\n`;
+    const previous = box.textContent === 'Esperando acciones...' ? '' : box.textContent;
+    const nextText = (chunk + previous).slice(0, MAX_LOG_CHARS);
+    box.textContent = nextText;
+    persistActivityLog(nextText);
+  }
+
+  function clearActivityLog() {
+    document.getElementById('activityLog').textContent = 'Esperando acciones...';
+    persistActivityLog('');
+  }
+
+  function summarizeToken(jwtToken) {
+    if (!jwtToken) return { present: false };
+    const payload = decodeJwtPayload(jwtToken);
+    return {
+      present: true,
+      preview: `${jwtToken.slice(0, 18)}...${jwtToken.slice(-12)}`,
+      payload
+    };
+  }
+
+  function currentSessionId() {
+    const payload = decodeJwtPayload(token);
+    return payload?.jti || '';
+  }
+
+  function decodeJwtPayload(jwtToken) {
+    try {
+      const payload = String(jwtToken || '').split('.')[1];
+      if (!payload) return null;
+      const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
+      const decoded = atob(normalized);
+      return JSON.parse(decoded);
+    } catch {
+      return null;
+    }
+  }
+
+  function refreshSessionLabel() {
+    document.getElementById('baseLabel').textContent = BASE;
+    const payload = decodeJwtPayload(token);
+    document.getElementById('currentUserLabel').textContent = payload?.email || payload?.sub || '--';
+  }
+
+  function saveToken() {
+    token = saveStoredToken(document.getElementById('tokenInput').value);
+    refreshSessionLabel();
+    setTokenStatus(token ? 'Token guardado.' : 'Token eliminado.');
+    loadUsers();
+  }
+
+  function clearStoredSession() {
+    token = saveStoredToken('');
+    document.getElementById('tokenInput').value = '';
+    document.getElementById('loginPassword').value = '';
+    refreshSessionLabel();
+    setTokenStatus('Token eliminado.');
+    renderUsers([]);
+    renderSessions([]);
+  }
+
+  function showError(message) {
+    const div = document.getElementById('errorDiv');
+    div.style.display = 'block';
+    div.textContent = message;
+  }
+
+  function hideError() {
+    document.getElementById('errorDiv').style.display = 'none';
+  }
+
+  function showSuccess(message) {
+    const div = document.getElementById('successDiv');
+    div.style.display = 'block';
+    div.textContent = message;
+    setTimeout(() => { div.style.display = 'none'; }, 2500);
+  }
+
+  async function apiJson(path, options = {}) {
+    const headers = {
+      ...buildAuthHeaders(token),
+      ...(options.body ? { 'Content-Type': 'application/json' } : {})
+    };
+    return fetchJsonOrThrow(BASE + path, { ...options, headers });
+  }
+
+  function resetUserForm() {
+    editingUserEmail = null;
+    document.getElementById('userFormTitle').textContent = 'Nuevo usuario';
+    document.getElementById('userForm').reset();
+    document.getElementById('userEmail').disabled = false;
+    document.getElementById('userRole').value = 'api';
+    document.getElementById('userActive').value = 'true';
+  }
+
+  function renderUsers(items) {
+    userItems = items.slice();
+    const tbody = document.getElementById('userRows');
+    if (!token) {
+      tbody.innerHTML = '<tr><td colspan="5">Inicie sesion para administrar usuarios.</td></tr>';
+      return;
+    }
+    if (!items.length) {
+      tbody.innerHTML = '<tr><td colspan="5">No hay usuarios registrados.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = items.map(item => `
+      <tr>
+        <td class="mono">${escapeHtml(item.email)}</td>
+        <td>${escapeHtml(item.role || 'api')}</td>
+        <td>${renderBadge(item.active ? 'ENABLED' : 'DISABLED')}</td>
+        <td>${escapeHtml(formatDateTime(item.lastLoginAt))}</td>
+        <td class="action-cell">
+          <button class="button-secondary compact" onclick="editUser('${escapeJs(item.email)}')">Editar</button>
+          <button class="button-secondary compact" onclick="toggleUserState('${escapeJs(item.email)}', ${item.active ? 'false' : 'true'})">${item.active ? 'Desactivar' : 'Activar'}</button>
+          <button class="button-secondary compact" onclick="deleteUser('${escapeJs(item.email)}')">Eliminar</button>
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  function renderSessions(items) {
+    sessionItems = items.slice();
+    const tbody = document.getElementById('sessionRows');
+    if (!token) {
+      tbody.innerHTML = '<tr><td colspan="6">Inicie sesion para ver sesiones.</td></tr>';
+      return;
+    }
+    if (!items.length) {
+      tbody.innerHTML = '<tr><td colspan="6">No hay sesiones registradas.</td></tr>';
+      return;
+    }
+    const mine = currentSessionId();
+    tbody.innerHTML = items.map(item => `
+      <tr>
+        <td class="mono">${escapeHtml(item.sessionId)}</td>
+        <td>${escapeHtml(item.email)}</td>
+        <td>${renderBadge(item.active ? 'ENABLED' : 'DISABLED')}</td>
+        <td>${escapeHtml(formatDateTime(item.expiresAt))}</td>
+        <td>${escapeHtml(formatDateTime(item.lastSeenAt))}</td>
+        <td class="action-cell">
+          ${item.sessionId === mine
+            ? `<button class="button-secondary compact" onclick="logoutCurrentSession()">Cerrar actual</button>`
+            : `<button class="button-secondary compact" onclick="closeSession('${escapeJs(item.sessionId)}')">Cerrar</button>`}
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  async function loadUsers() {
+    refreshSessionLabel();
+    if (!token) {
+      renderUsers([]);
+      showError('Inicie sesion para obtener un JWT y administrar usuarios.');
+      return;
+    }
+    try {
+      const data = await apiJson('/api/auth/users');
+      hideError();
+      renderUsers(data.users || []);
+      appendLog('GET /api/auth/users OK', { total: data.total || 0 });
+      loadSessions();
+    } catch (error) {
+      renderUsers([]);
+      renderSessions([]);
+      showError('No se pudieron cargar los usuarios: ' + error.message);
+      appendLog('GET /api/auth/users ERROR', { error: error.message });
+    }
+  }
+
+  async function loadSessions() {
+    if (!token) {
+      renderSessions([]);
+      return;
+    }
+    try {
+      const data = await apiJson('/api/auth/sessions');
+      renderSessions(data.sessions || []);
+      appendLog('GET /api/auth/sessions OK', { total: data.total || 0 });
+    } catch (error) {
+      renderSessions([]);
+      appendLog('GET /api/auth/sessions ERROR', { error: error.message });
+    }
+  }
+
+  async function editUser(email) {
+    try {
+      const data = await apiJson(`/api/auth/users/${encodeURIComponent(email)}`);
+      const item = data.user;
+      editingUserEmail = item.email;
+      document.getElementById('userFormTitle').textContent = `Editar ${item.email}`;
+      document.getElementById('userEmail').disabled = true;
+      document.getElementById('userEmail').value = item.email;
+      document.getElementById('userRole').value = item.role || 'api';
+      document.getElementById('userActive').value = item.active ? 'true' : 'false';
+      document.getElementById('userPassword').value = '';
+      hideError();
+      appendLog('GET /api/auth/users/:email OK', item);
+    } catch (error) {
+      showError('No se pudo cargar el usuario: ' + error.message);
+      appendLog('GET /api/auth/users/:email ERROR', { email, error: error.message });
+    }
+  }
+
+  async function deleteUser(email) {
+    if (!confirm(`Eliminar usuario ${email}?`)) return;
+    try {
+      await apiJson(`/api/auth/users/${encodeURIComponent(email)}`, { method: 'DELETE' });
+      showSuccess('Usuario eliminado.');
+      if (editingUserEmail === email) resetUserForm();
+      loadUsers();
+      appendLog('DELETE /api/auth/users/:email OK', { email });
+    } catch (error) {
+      showError('No se pudo eliminar el usuario: ' + error.message);
+      appendLog('DELETE /api/auth/users/:email ERROR', { email, error: error.message });
+    }
+  }
+
+  async function closeSession(sessionId) {
+    if (!confirm(`Cerrar sesion ${sessionId}?`)) return;
+    try {
+      await apiJson(`/api/auth/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
+      showSuccess('Sesion cerrada.');
+      appendLog('DELETE /api/auth/sessions/:sessionId OK', { sessionId });
+      loadSessions();
+    } catch (error) {
+      showError('No se pudo cerrar la sesion: ' + error.message);
+      appendLog('DELETE /api/auth/sessions/:sessionId ERROR', { sessionId, error: error.message });
+    }
+  }
+
+  async function toggleUserState(email, nextActive) {
+    try {
+      const current = userItems.find(item => item.email === email);
+      await apiJson(`/api/auth/users/${encodeURIComponent(email)}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          email,
+          role: current?.role || 'api',
+          active: nextActive
+        })
+      });
+      showSuccess(`Usuario ${nextActive ? 'activado' : 'desactivado'}.`);
+      if (editingUserEmail === email) {
+        document.getElementById('userActive').value = nextActive ? 'true' : 'false';
+      }
+      loadUsers();
+      appendLog('PUT /api/auth/users/:email OK', { email, active: nextActive });
+    } catch (error) {
+      showError('No se pudo actualizar el estado del usuario: ' + error.message);
+      appendLog('PUT /api/auth/users/:email ERROR', { email, active: nextActive, error: error.message });
+    }
+  }
+
+  async function runRequestTest() {
+    const path = document.getElementById('requestPath').value;
+    try {
+      const headers = path === '/api/health' ? {} : buildAuthHeaders(token);
+      const data = await fetchJsonOrThrow(BASE + path, { headers });
+      appendLog(`GET ${path} OK`, data);
+      hideError();
+    } catch (error) {
+      appendLog(`GET ${path} ERROR`, { error: error.message });
+      showError(`No se pudo ejecutar ${path}: ${error.message}`);
+    }
+  }
+
+  async function logoutCurrentSession() {
+    if (!token) return;
+    try {
+      const data = await apiJson('/api/logout', { method: 'POST' });
+      appendLog('POST /api/logout OK', data);
+      clearStoredSession();
+      showSuccess('Sesion cerrada.');
+      hideError();
+    } catch (error) {
+      showError(`No se pudo cerrar la sesion actual: ${error.message}`);
+      appendLog('POST /api/logout ERROR', { error: error.message });
+    }
+  }
+
+  document.getElementById('loginForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    try {
+      const body = {
+        email: document.getElementById('loginEmail').value,
+        password: document.getElementById('loginPassword').value
+      };
+      const data = await fetchJsonOrThrow(BASE + '/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      appendLog('POST /api/login OK', {
+        request: { email: body.email },
+        response: {
+          success: data.success,
+          tokenType: data.tokenType,
+          expiresIn: data.expiresIn,
+          session: data.session,
+          user: data.user
+        }
+      });
+      token = saveStoredToken(data.token || '');
+      document.getElementById('tokenInput').value = token;
+      refreshSessionLabel();
+      setTokenStatus('Token obtenido por login.');
+      appendLog('JWT almacenado', summarizeToken(token));
+      showSuccess(`Sesion iniciada como ${data.user?.email || body.email}.`);
+      hideError();
+      loadUsers();
+    } catch (error) {
+      showError('No se pudo iniciar sesion: ' + error.message);
+      appendLog('POST /api/login ERROR', {
+        request: { email: document.getElementById('loginEmail').value },
+        error: error.message
+      });
+    }
+  });
+
+  document.getElementById('userForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    try {
+      const body = {
+        email: editingUserEmail || document.getElementById('userEmail').value,
+        role: document.getElementById('userRole').value,
+        active: document.getElementById('userActive').value === 'true'
+      };
+      const password = document.getElementById('userPassword').value;
+      if (password) body.password = password;
+
+      const target = editingUserEmail
+        ? `/api/auth/users/${encodeURIComponent(editingUserEmail)}`
+        : '/api/auth/users';
+      const method = editingUserEmail ? 'PUT' : 'POST';
+      await apiJson(target, { method, body: JSON.stringify(body) });
+      showSuccess('Usuario guardado.');
+      appendLog(`${method} ${target} OK`, {
+        email: body.email,
+        role: body.role,
+        active: body.active,
+        passwordUpdated: Boolean(password)
+      });
+      resetUserForm();
+      loadUsers();
+    } catch (error) {
+      showError('No se pudo guardar el usuario: ' + error.message);
+      appendLog('SAVE USER ERROR', { error: error.message });
+    }
+  });
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    document.getElementById('tokenInput').value = token;
+    refreshSessionLabel();
+    resetUserForm();
+    const persistedLog = loadPersistedActivityLog();
+    if (persistedLog) {
+      document.getElementById('activityLog').textContent = persistedLog;
+    } else {
+      appendLog('Vista cargada', {
+        base: BASE,
+        token: summarizeToken(token)
+      });
+    }
+    loadUsers();
+  });
+</script>
+</body>
+</html>

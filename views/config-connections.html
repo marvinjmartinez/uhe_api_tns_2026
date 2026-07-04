@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Conexiones API - TNS Local</title>
+  <link rel="stylesheet" href="shared.css">
+  <script src="shared.js"></script>
+</head>
+<body>
+<nav></nav>
+<main>
+  <section class="page-hero">
+    <div class="hero-panel">
+      <div class="hero-kicker">Configuracion / Conexiones</div>
+      <h1>Destinos de base de datos</h1>
+      <p>Alta, edicion, duplicado y eliminacion de conexiones autorizadas para consultas SQL.</p>
+    </div>
+    <div class="side-panel stack">
+      <div><div class="muted">Total</div><div class="mono" id="connectionCountLabel">--</div></div>
+    </div>
+  </section>
+
+  <div id="configSectionTabs"></div>
+
+  <div class="token-banner">
+    <label for="tokenInput">JWT Token</label>
+    <input id="tokenInput" type="password" placeholder="eyJhbGciOiJI..." />
+    <button onclick="saveToken()">Guardar</button>
+    <span id="tokenStatus"></span>
+  </div>
+
+  <div id="errorDiv" class="error-msg" style="display:none"></div>
+  <div id="successDiv" class="success-msg" style="display:none"></div>
+
+  <section class="two-col">
+    <section class="panel">
+      <h2>Conexiones API</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>ID</th><th>Nombre</th><th>Estado</th><th>Motor</th><th>Acciones</th></tr></thead>
+          <tbody id="connectionRows"><tr><td colspan="5">Cargando...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2 id="connectionFormTitle">Nueva conexion</h2>
+      <form id="connectionForm" class="form-stack">
+        <div class="form-grid">
+          <label>ID<input id="connId" required></label>
+          <label>Nombre<input id="connName" required></label>
+          <label>Motor
+            <select id="connEngine">
+              <option value="firebird">Firebird</option>
+              <option value="mysql">MySQL</option>
+              <option value="sqlserver">SQL Server</option>
+              <option value="postgres">Postgres</option>
+            </select>
+          </label>
+          <label>Activo
+            <select id="connActive"><option value="true">Si</option><option value="false">No</option></select>
+          </label>
+          <label>Host<input id="connHost"></label>
+          <label>Puerto<input id="connPort" type="number"></label>
+          <label>Usuario<input id="connUser"></label>
+          <label>Clave<input id="connPassword" type="password"></label>
+          <label>Timeout<input id="connTimeout" type="number"></label>
+        </div>
+        <label>Ruta BD / Database<input id="connDatabase"></label>
+        <div class="ops-group">
+          <span>Operaciones permitidas</span>
+          <label><input type="checkbox" name="connOps" value="SELECT" checked> SELECT</label>
+          <label><input type="checkbox" name="connOps" value="INSERT"> INSERT</label>
+          <label><input type="checkbox" name="connOps" value="UPDATE"> UPDATE</label>
+          <label><input type="checkbox" name="connOps" value="DELETE"> DELETE</label>
+        </div>
+        <div class="action-row">
+          <button type="submit" class="button-link">Guardar</button>
+          <button type="button" class="button-secondary" onclick="resetConnectionForm()">Nueva</button>
+        </div>
+      </form>
+    </section>
+  </section>
+</main>
+<script>
+  const BASE = resolveApiBase();
+  let token = getStoredToken();
+  let editingConnectionId = null;
+  let connectionItems = [];
+
+  function saveToken() {
+    token = saveStoredToken(document.getElementById('tokenInput').value);
+    setTokenStatus(token ? 'Token guardado.' : 'Token eliminado.');
+    loadConnections();
+  }
+
+  function showError(message) {
+    const div = document.getElementById('errorDiv');
+    div.style.display = 'block';
+    div.textContent = message;
+  }
+
+  function hideError() {
+    document.getElementById('errorDiv').style.display = 'none';
+  }
+
+  function showSuccess(message) {
+    const div = document.getElementById('successDiv');
+    div.style.display = 'block';
+    div.textContent = message;
+    setTimeout(() => { div.style.display = 'none'; }, 2500);
+  }
+
+  async function apiJson(path, options = {}) {
+    const headers = {
+      ...buildAuthHeaders(token),
+      ...(options.body ? { 'Content-Type': 'application/json' } : {})
+    };
+    return fetchJsonOrThrow(BASE + path, { ...options, headers });
+  }
+
+  function fillOps(ops) {
+    document.querySelectorAll('input[name="connOps"]').forEach(box => {
+      box.checked = ops.includes(box.value);
+    });
+  }
+
+  function resetConnectionForm() {
+    editingConnectionId = null;
+    document.getElementById('connectionFormTitle').textContent = 'Nueva conexion';
+    document.getElementById('connectionForm').reset();
+    document.getElementById('connActive').value = 'true';
+    document.getElementById('connId').disabled = false;
+    fillOps(['SELECT']);
+  }
+
+  function suggestDuplicateId(baseId) {
+    const normalized = String(baseId || '').trim() || 'conexion';
+    const existingIds = new Set(connectionItems.map(item => String(item.id || '').trim()).filter(Boolean));
+    let candidate = `${normalized}-copy`;
+    let suffix = 2;
+    while (existingIds.has(candidate)) {
+      candidate = `${normalized}-copy-${suffix}`;
+      suffix += 1;
+    }
+    return candidate;
+  }
+
+  function suggestDuplicateName(baseName) {
+    const normalized = String(baseName || '').trim() || 'Nueva conexion';
+    const existingNames = new Set(connectionItems.map(item => String(item.name || '').trim().toLowerCase()).filter(Boolean));
+    let candidate = `${normalized} copia`;
+    let suffix = 2;
+    while (existingNames.has(candidate.toLowerCase())) {
+      candidate = `${normalized} copia ${suffix}`;
+      suffix += 1;
+    }
+    return candidate;
+  }
+
+  function populateConnectionForm(item, mode = 'edit') {
+    const isDuplicate = mode === 'duplicate';
+    editingConnectionId = isDuplicate ? null : item.id;
+    document.getElementById('connectionFormTitle').textContent = isDuplicate
+      ? `Duplicar ${item.name || item.id}`
+      : `Editar ${item.name || item.id}`;
+    document.getElementById('connId').disabled = !isDuplicate;
+    document.getElementById('connId').value = isDuplicate ? suggestDuplicateId(item.id) : item.id;
+    document.getElementById('connName').value = isDuplicate ? suggestDuplicateName(item.name || item.id) : (item.name || '');
+    document.getElementById('connEngine').value = item.engine || 'firebird';
+    document.getElementById('connActive').value = item.active ? 'true' : 'false';
+    document.getElementById('connHost').value = item.host || '';
+    document.getElementById('connPort').value = item.port || '';
+    document.getElementById('connUser').value = item.username || '';
+    document.getElementById('connPassword').value = '';
+    document.getElementById('connTimeout').value = item.options?.timeoutMs || item.timeoutMs || '';
+    document.getElementById('connDatabase').value = item.databasePath || item.databaseName || item.database || '';
+    fillOps(item.allowedOperations || ['SELECT']);
+  }
+
+  function renderConnections(items) {
+    connectionItems = items.slice();
+    document.getElementById('connectionCountLabel').textContent = String(items.length);
+    const tbody = document.getElementById('connectionRows');
+    tbody.innerHTML = items.map(item => `
+      <tr>
+        <td class="mono">${escapeHtml(item.id)}</td>
+        <td>${escapeHtml(item.name || '--')}</td>
+        <td>${renderBadge(item.active ? 'ENABLED' : 'DISABLED')}</td>
+        <td>${escapeHtml(item.engine || '--')}</td>
+        <td>
+          <button class="button-secondary" onclick="editConnection('${escapeJs(item.id)}')">Editar</button>
+          <button class="button-secondary" onclick="duplicateConnection('${escapeJs(item.id)}')">Duplicar</button>
+          <button class="button-secondary" onclick="removeConnection('${escapeJs(item.id)}')">Eliminar</button>
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  async function editConnection(id) {
+    try {
+      const data = await apiJson(`/api/connections/${encodeURIComponent(id)}`);
+      populateConnectionForm(data.connection, 'edit');
+    } catch (error) {
+      if (handleAuthFailure(error, 'login.html')) return;
+      showError('No se pudo cargar la conexion: ' + error.message);
+    }
+  }
+
+  async function duplicateConnection(id) {
+    try {
+      const data = await apiJson(`/api/connections/${encodeURIComponent(id)}`);
+      populateConnectionForm(data.connection, 'duplicate');
+      hideError();
+      showSuccess('Conexion cargada como duplicado.');
+    } catch (error) {
+      if (handleAuthFailure(error, 'login.html')) return;
+      showError('No se pudo duplicar la conexion: ' + error.message);
+    }
+  }
+
+  async function removeConnection(id) {
+    try {
+      await apiJson(`/api/connections/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      showSuccess('Conexion eliminada.');
+      loadConnections();
+    } catch (error) {
+      if (handleAuthFailure(error, 'login.html')) return;
+      showError('No se pudo eliminar la conexion: ' + error.message);
+    }
+  }
+
+  async function loadConnections() {
+    if (!token) {
+      showError('Inicie sesion para administrar conexiones.');
+      return;
+    }
+    try {
+      const data = await apiJson('/api/connections');
+      hideError();
+      renderConnections(data.connections || []);
+    } catch (error) {
+      if (handleAuthFailure(error, 'login.html')) return;
+      showError('No se pudieron cargar las conexiones: ' + error.message);
+    }
+  }
+
+  document.getElementById('connectionForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    try {
+      const body = {
+        id: editingConnectionId || document.getElementById('connId').value,
+        name: document.getElementById('connName').value,
+        engine: document.getElementById('connEngine').value,
+        active: document.getElementById('connActive').value === 'true',
+        host: document.getElementById('connHost').value,
+        port: document.getElementById('connPort').value,
+        user: document.getElementById('connUser').value,
+        password: document.getElementById('connPassword').value || undefined,
+        timeoutMs: document.getElementById('connTimeout').value,
+        dbPath: document.getElementById('connDatabase').value,
+        allowedOperations: Array.from(document.querySelectorAll('input[name="connOps"]:checked')).map(box => box.value)
+      };
+      const target = editingConnectionId
+        ? `/api/connections/${encodeURIComponent(editingConnectionId)}`
+        : '/api/connections';
+      const method = editingConnectionId ? 'PUT' : 'POST';
+      await apiJson(target, { method, body: JSON.stringify(body) });
+      document.getElementById('connId').disabled = false;
+      resetConnectionForm();
+      showSuccess('Conexion guardada.');
+      loadConnections();
+    } catch (error) {
+      if (handleAuthFailure(error, 'login.html')) return;
+      showError('No se pudo guardar la conexion: ' + error.message);
+    }
+  });
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    document.getElementById('tokenInput').value = token;
+    token = await autoLoadToken();
+    if (token) document.getElementById('tokenInput').value = token;
+    resetConnectionForm();
+    loadConnections();
+  });
+</script>
+</body>
+</html>

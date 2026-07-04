@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Configuracion API - TNS Local</title>
+  <link rel="stylesheet" href="shared.css">
+  <script src="shared.js"></script>
+</head>
+<body>
+<nav></nav>
+<main>
+  <section class="page-hero">
+    <div class="hero-panel">
+      <div class="hero-kicker">Configuracion API</div>
+      <h1>Resumen operativo</h1>
+      <p>La configuracion ahora queda separada por responsabilidad: conexiones, modulos, claves y actividad. Desde aqui ve el estado general y entra al bloque que necesita.</p>
+    </div>
+    <div class="side-panel stack">
+      <div><div class="muted">SQLite</div><div class="mono" id="sqliteLabel">--</div></div>
+      <div><div class="muted">Ultima auditoria</div><div class="mono" id="auditStampLabel">--</div></div>
+    </div>
+  </section>
+
+  <div id="configSectionTabs"></div>
+
+  <div class="token-banner">
+    <label for="tokenInput">JWT Token</label>
+    <input id="tokenInput" type="password" placeholder="eyJhbGciOiJI..." />
+    <button onclick="saveToken()">Guardar</button>
+    <span id="tokenStatus"></span>
+  </div>
+
+  <div id="errorDiv" class="error-msg" style="display:none"></div>
+
+  <section class="metric-grid">
+    <div class="metric-tile"><strong>Conexiones</strong><span id="metricConnections">--</span></div>
+    <div class="metric-tile"><strong>Conexiones activas</strong><span id="metricActiveConnections">--</span></div>
+    <div class="metric-tile"><strong>Modulos</strong><span id="metricModules">--</span></div>
+    <div class="metric-tile"><strong>Modulos activos</strong><span id="metricModulesEnabled">--</span></div>
+    <div class="metric-tile"><strong>Claves</strong><span id="metricSettings">--</span></div>
+    <div class="metric-tile"><strong>Eventos auditados</strong><span id="metricAudit">--</span></div>
+  </section>
+
+  <section class="two-col">
+    <section class="panel">
+      <div class="panel-heading">
+        <h2>Areas de configuracion</h2>
+      </div>
+      <div class="stack">
+        <div class="swagger-response-row"><span class="mono">Conexiones</span><span>Alta, edicion, duplicado y borrado de destinos.</span><a class="button-secondary" href="config-connections.html">Abrir</a></div>
+        <div class="swagger-response-row"><span class="mono">Modulos</span><span>Activar o desactivar componentes del servicio.</span><a class="button-secondary" href="config-modules.html">Abrir</a></div>
+        <div class="swagger-response-row"><span class="mono">Claves</span><span>Parametros locales y auditoria de cambios.</span><a class="button-secondary" href="config-settings.html">Abrir</a></div>
+        <div class="swagger-response-row"><span class="mono">Actividad API</span><span>Historico de queries, sesiones y cambios administrativos.</span><a class="button-secondary" href="activity.html">Abrir</a></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-heading">
+        <h2>Modulos actuales</h2>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Modulo</th><th>Estado</th></tr></thead>
+          <tbody id="moduleRows"><tr><td colspan="2">Cargando...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </section>
+
+  <section class="panel">
+    <div class="panel-heading">
+      <h2>Auditoria reciente</h2>
+      <a class="button-secondary" href="activity.html">Ver historico completo</a>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Evento</th><th>Valor nuevo</th><th>Usuario</th><th>Fecha</th></tr></thead>
+        <tbody id="auditRows"><tr><td colspan="4">Cargando...</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+<script>
+  const BASE = resolveApiBase();
+  let token = getStoredToken();
+
+  function saveToken() {
+    token = saveStoredToken(document.getElementById('tokenInput').value);
+    setTokenStatus(token ? 'Token guardado.' : 'Token eliminado.');
+    loadOverview();
+  }
+
+  function showError(message) {
+    const div = document.getElementById('errorDiv');
+    div.style.display = 'block';
+    div.textContent = message;
+  }
+
+  function hideError() {
+    document.getElementById('errorDiv').style.display = 'none';
+  }
+
+  async function apiJson(path, options = {}) {
+    const headers = {
+      ...buildAuthHeaders(token),
+      ...(options.body ? { 'Content-Type': 'application/json' } : {})
+    };
+    return fetchJsonOrThrow(BASE + path, { ...options, headers });
+  }
+
+  function renderModules(items) {
+    const tbody = document.getElementById('moduleRows');
+    tbody.innerHTML = items.map(item => `
+      <tr>
+        <td>${escapeHtml(item.name || item.key)}</td>
+        <td>${renderBadge(item.enabled ? 'ENABLED' : 'DISABLED')}</td>
+      </tr>
+    `).join('');
+  }
+
+  function renderAudit(items) {
+    const tbody = document.getElementById('auditRows');
+    tbody.innerHTML = items.map(item => `
+      <tr>
+        <td class="mono">${escapeHtml(item.settingKey || '--')}</td>
+        <td>${escapeHtml(item.newValue || '--')}</td>
+        <td>${escapeHtml(item.userName || '--')}</td>
+        <td>${escapeHtml(formatDateTime(item.createdAt))}</td>
+      </tr>
+    `).join('');
+  }
+
+  async function loadOverview() {
+    if (!token) {
+      showError('Inicie sesion para revisar la configuracion.');
+      return;
+    }
+    try {
+      const [config, audit] = await Promise.all([
+        apiJson('/api/config/local'),
+        apiJson('/api/config/audit-log?limit=8')
+      ]);
+      hideError();
+      const connections = config.connections || [];
+      const modules = config.modules || [];
+      const settings = config.settings || [];
+      const auditItems = audit.items || [];
+      document.getElementById('sqliteLabel').textContent = config.store?.dbPath || '--';
+      document.getElementById('auditStampLabel').textContent = auditItems[0]?.createdAt ? formatDateTime(auditItems[0].createdAt) : '--';
+      document.getElementById('metricConnections').textContent = String(connections.length);
+      document.getElementById('metricActiveConnections').textContent = String(connections.filter(item => item.active).length);
+      document.getElementById('metricModules').textContent = String(modules.length);
+      document.getElementById('metricModulesEnabled').textContent = String(modules.filter(item => item.enabled).length);
+      document.getElementById('metricSettings').textContent = String(settings.length);
+      document.getElementById('metricAudit').textContent = String(auditItems.length);
+      renderModules(modules);
+      renderAudit(auditItems);
+    } catch (error) {
+      if (handleAuthFailure(error, 'login.html')) return;
+      showError('No se pudo cargar el resumen: ' + error.message);
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    document.getElementById('tokenInput').value = token;
+    token = await autoLoadToken();
+    if (token) document.getElementById('tokenInput').value = token;
+    loadOverview();
+  });
+</script>
+</body>
+</html>

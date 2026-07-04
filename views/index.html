@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API Query - TNS Local</title>
+  <link rel="stylesheet" href="shared.css">
+  <script src="shared.js"></script>
+</head>
+<body>
+<nav></nav>
+<main>
+  <section class="page-hero">
+    <div class="hero-panel">
+      <div class="hero-kicker">Servicio 8086</div>
+      <h1>API Query</h1>
+      <p>Esta app queda enfocada en conexiones, ejecucion controlada de SQL, conectividad, metricas y auditoria del servicio API.</p>
+    </div>
+    <div class="side-panel stack">
+      <div><div class="muted">Base</div><div class="mono" id="baseLabel">--</div></div>
+      <div><div class="muted">Estado</div><div id="healthBadge">--</div></div>
+    </div>
+  </section>
+
+  <div class="token-banner">
+    <label for="tokenInput">JWT Token</label>
+    <input id="tokenInput" type="password" placeholder="eyJhbGciOiJI..." />
+    <button onclick="saveToken()">Guardar</button>
+    <span id="tokenStatus"></span>
+  </div>
+
+  <div id="errorDiv" class="error-msg" style="display:none"></div>
+  <div id="successDiv" class="success-msg" style="display:none"></div>
+
+  <section class="two-col">
+    <section class="panel">
+      <h2>Sesion activa</h2>
+      <div class="stack">
+        <div><div class="muted">Usuario</div><div class="mono" id="sessionUserLabel">--</div></div>
+        <div><div class="muted">Sesion</div><div class="mono" id="sessionIdLabel">--</div></div>
+        <div><div class="muted">Expira</div><div class="mono" id="sessionExpiryLabel">--</div></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Control de acceso</h2>
+      <div class="stack">
+        <p class="muted">El acceso principal se realiza desde <code>login.html</code>. Si la sesion vence o el token se invalida, esta vista regresa automaticamente al login raiz.</p>
+        <div class="action-row">
+          <a class="button-link" href="login.html">Ir al login</a>
+          <button type="button" class="button-secondary" onclick="clearSession()">Cerrar sesion local</button>
+        </div>
+      </div>
+    </section>
+  </section>
+
+  <section class="two-col">
+    <section class="panel">
+      <h2>Ejecutar consulta</h2>
+      <div class="form-stack">
+        <label>Conexion
+          <select id="connectionSelect"></select>
+        </label>
+        <label>SQL
+          <textarea id="sqlInput">SELECT FIRST 5 * FROM BANCO</textarea>
+        </label>
+        <div class="action-row">
+          <button class="button-link" onclick="runQuery()">Ejecutar</button>
+          <button class="button-secondary" onclick="loadDashboard()">Refrescar</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Respuesta</h2>
+      <pre id="responseBox" class="code-block">Esperando ejecucion...</pre>
+    </section>
+  </section>
+
+  <section class="metric-grid">
+    <div class="metric-tile"><strong>Conexiones</strong><span id="metricConnections">--</span></div>
+    <div class="metric-tile"><strong>Activas</strong><span id="metricActive">--</span></div>
+    <div class="metric-tile"><strong>Queries hoy</strong><span id="metricQueries">--</span></div>
+    <div class="metric-tile"><strong>Errores hoy</strong><span id="metricErrors">--</span></div>
+  </section>
+
+  <section class="panel">
+    <h2>Conexiones registradas</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>ID</th><th>Nombre</th><th>Estado</th><th>Motor</th><th>Destino</th><th>Operaciones</th></tr></thead>
+        <tbody id="connectionRows"><tr><td colspan="6">Cargando...</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+<script>
+  const BASE = resolveApiBase();
+  let token = getStoredToken();
+
+  function decodeJwtPayload(jwtToken) {
+    try {
+      const payload = String(jwtToken || '').split('.')[1];
+      if (!payload) return null;
+      const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
+      return JSON.parse(atob(normalized));
+    } catch {
+      return null;
+    }
+  }
+
+  function saveToken() {
+    token = saveStoredToken(document.getElementById('tokenInput').value);
+    setTokenStatus('Token guardado.');
+    renderSessionInfo();
+    loadDashboard();
+  }
+
+  function clearSession() {
+    clearStoredToken();
+    token = '';
+    document.getElementById('tokenInput').value = '';
+    setTokenStatus('Token eliminado.');
+    renderSessionInfo();
+    showSuccess('Sesion local limpiada.');
+  }
+
+  function showError(message) {
+    const div = document.getElementById('errorDiv');
+    div.style.display = 'block';
+    div.textContent = message;
+  }
+
+  function hideError() {
+    document.getElementById('errorDiv').style.display = 'none';
+  }
+
+  function showSuccess(message) {
+    const div = document.getElementById('successDiv');
+    div.style.display = 'block';
+    div.textContent = message;
+    setTimeout(() => { div.style.display = 'none'; }, 2500);
+  }
+
+  function renderSessionInfo() {
+    const payload = decodeJwtPayload(token);
+    document.getElementById('sessionUserLabel').textContent = payload?.email || payload?.sub || '--';
+    document.getElementById('sessionIdLabel').textContent = payload?.jti || '--';
+    document.getElementById('sessionExpiryLabel').textContent = payload?.exp
+      ? formatDateTime(new Date(payload.exp * 1000).toISOString())
+      : '--';
+  }
+
+  async function apiJson(path, options = {}) {
+    const headers = {
+      ...buildAuthHeaders(token),
+      ...(options.body ? { 'Content-Type': 'application/json' } : {})
+    };
+    return fetchJsonOrThrow(BASE + path, { ...options, headers });
+  }
+
+  function renderConnections(items) {
+    const tbody = document.getElementById('connectionRows');
+    const select = document.getElementById('connectionSelect');
+    if (!items.length) {
+      tbody.innerHTML = '<tr><td colspan="6">No hay conexiones registradas.</td></tr>';
+      select.innerHTML = '';
+      return;
+    }
+    tbody.innerHTML = items.map(item => `
+      <tr>
+        <td class="mono">${escapeHtml(item.id)}</td>
+        <td>${escapeHtml(item.name || '--')}</td>
+        <td>${renderBadge(item.active ? 'ENABLED' : 'DISABLED')}</td>
+        <td>${escapeHtml(item.engine || '--')}</td>
+        <td>${escapeHtml(item.databasePath || item.database || '--')}</td>
+        <td>${escapeHtml((item.allowedOperations || []).join(', '))}</td>
+      </tr>
+    `).join('');
+    select.innerHTML = items.map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name || item.id)}</option>`).join('');
+  }
+
+  async function loadDashboard() {
+    if (!token) {
+      showError('Inicie sesion para usar el dashboard API.');
+      return;
+    }
+
+    try {
+      const [health, connections, metrics] = await Promise.all([
+        fetchJsonOrThrow(BASE + '/api/health'),
+        apiJson('/api/connections'),
+        apiJson('/api/metrics')
+      ]);
+      hideError();
+      document.getElementById('baseLabel').textContent = BASE;
+      document.getElementById('healthBadge').innerHTML = renderBadge(health.healthLevel || 'OK');
+      document.getElementById('metricConnections').textContent = String(metrics.connections_total ?? connections.total ?? 0);
+      document.getElementById('metricActive').textContent = String(metrics.connections_active ?? 0);
+      document.getElementById('metricQueries').textContent = String(metrics.queries_today ?? 0);
+      document.getElementById('metricErrors').textContent = String(metrics.query_errors ?? 0);
+      renderConnections(connections.connections || []);
+    } catch (error) {
+      if (handleAuthFailure(error, 'login.html')) return;
+      showError('No se pudo cargar el dashboard: ' + error.message);
+    }
+  }
+
+  async function runQuery() {
+    if (!token) {
+      showError('Debe iniciar sesion antes de ejecutar una consulta.');
+      return;
+    }
+    try {
+      const payload = {
+        connectionName: document.getElementById('connectionSelect').value,
+        sql: document.getElementById('sqlInput').value
+      };
+      const response = await fetch(BASE + '/api/query', {
+        method: 'POST',
+        headers: {
+          ...buildAuthHeaders(token),
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+      const text = await response.text();
+      document.getElementById('responseBox').textContent = text || '(sin cuerpo)';
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          clearSession();
+          globalThis.location.href = 'login.html';
+          return;
+        }
+        showError(`La consulta devolvio HTTP ${response.status}.`);
+      } else {
+        hideError();
+        loadDashboard();
+      }
+    } catch (error) {
+      showError('Fallo al ejecutar /api/query: ' + error.message);
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    document.getElementById('tokenInput').value = token;
+    renderSessionInfo();
+    loadDashboard();
+  });
+</script>
+</body>
+</html>

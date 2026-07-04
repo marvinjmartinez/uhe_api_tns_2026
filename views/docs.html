@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Docs API - TNS Local</title>
+  <link rel="stylesheet" href="shared.css">
+  <script src="shared.js"></script>
+</head>
+<body>
+<nav></nav>
+<main>
+  <section class="page-hero">
+    <div class="hero-panel">
+      <div class="hero-kicker">API Explorer</div>
+      <h1>Documentacion interactiva de la API</h1>
+      <p>Vista tipo Swagger para navegar el contrato OpenAPI, revisar autenticacion, ver payloads y lanzar pruebas rapidas contra la API local. Para ejecutar SQL se exige bearer token, <code>connectionName</code> y <code>sql</code>.</p>
+      <div class="hero-actions">
+        <a class="button-link" href="openapi.api.json" target="_blank" rel="noreferrer">Ver OpenAPI JSON</a>
+        <a class="button-secondary" href="users.html">Usuarios y sesiones</a>
+      </div>
+    </div>
+    <div class="side-panel stack">
+      <div><div class="muted">Base URL</div><div class="mono" id="baseLabel">--</div></div>
+      <div><div class="muted">OpenAPI</div><div class="mono" id="openapiVersionLabel">--</div></div>
+      <div><div class="muted">Endpoints</div><div id="endpointCountLabel">--</div></div>
+    </div>
+  </section>
+
+  <div class="token-banner">
+    <label for="tokenInput">JWT Token</label>
+    <input id="tokenInput" type="password" placeholder="eyJhbGciOiJI..." />
+    <button onclick="saveToken()">Guardar</button>
+    <span id="tokenStatus"></span>
+  </div>
+
+  <div id="errorDiv" class="error-msg" style="display:none"></div>
+  <div id="successDiv" class="success-msg" style="display:none"></div>
+
+  <section class="two-col swagger-layout">
+    <section class="panel">
+      <div class="panel-heading">
+        <h2>Endpoints</h2>
+        <input id="endpointFilter" class="inline-input" placeholder="Filtrar por ruta, metodo o tag">
+      </div>
+      <div id="endpointList" class="stack">
+        <div class="empty-state">Cargando contrato OpenAPI...</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-heading">
+        <h2>Detalle y prueba</h2>
+      </div>
+      <div id="endpointDetail" class="stack">
+        <div class="empty-state">Seleccione un endpoint para ver detalle.</div>
+      </div>
+    </section>
+  </section>
+
+  <section class="panel">
+    <h2>Politica de seguridad</h2>
+    <div class="stack">
+      <div class="swagger-response-row"><span class="mono">Auth</span><span>Bearer JWT obligatorio para endpoints protegidos.</span></div>
+      <div class="swagger-response-row"><span class="mono">Query</span><span><code>POST /api/query</code> exige <code>connectionName</code> y <code>sql</code>.</span></div>
+      <div class="swagger-response-row"><span class="mono">TTL</span><span>El token vence por defecto en <code>30m</code>.</span></div>
+      <div class="swagger-response-row"><span class="mono">Idle</span><span>La sesion se cierra automaticamente tras <code>15m</code> sin actividad.</span></div>
+    </div>
+  </section>
+</main>
+<script>
+  const BASE = resolveApiBase();
+  let token = getStoredToken();
+  let openapi = null;
+  let endpointItems = [];
+  let selectedEndpointKey = '';
+
+  function showError(message) {
+    const div = document.getElementById('errorDiv');
+    div.style.display = 'block';
+    div.textContent = message;
+  }
+
+  function hideError() {
+    document.getElementById('errorDiv').style.display = 'none';
+  }
+
+  function showSuccess(message) {
+    const div = document.getElementById('successDiv');
+    div.style.display = 'block';
+    div.textContent = message;
+    setTimeout(() => { div.style.display = 'none'; }, 2500);
+  }
+
+  function saveToken() {
+    token = saveStoredToken(document.getElementById('tokenInput').value);
+    setTokenStatus(token ? 'Token guardado.' : 'Token eliminado.');
+    if (selectedEndpointKey) renderEndpointDetail(findEndpoint(selectedEndpointKey));
+  }
+
+  function apiHeaders(requiresAuth, hasBody) {
+    return {
+      ...(requiresAuth ? buildAuthHeaders(token) : {}),
+      ...(hasBody ? { 'Content-Type': 'application/json' } : {})
+    };
+  }
+
+  function methodBadge(method) {
+    const map = {
+      GET: 'ok',
+      POST: 'info',
+      PUT: 'warning',
+      DELETE: 'failed',
+      PATCH: 'info'
+    };
+    const text = String(method || '').toUpperCase();
+    return `<span class="badge ${map[text] || 'info'}">${escapeHtml(text)}</span>`;
+  }
+
+  function operationSummary(operation) {
+    return operation.summary || operation.description || 'Sin descripcion';
+  }
+
+  function operationTags(operation) {
+    return Array.isArray(operation.tags) && operation.tags.length ? operation.tags : ['General'];
+  }
+
+  function flattenOpenApi(spec) {
+    const methods = ['get', 'post', 'put', 'delete', 'patch'];
+    const items = [];
+    for (const [routePath, pathItem] of Object.entries(spec.paths || {})) {
+      for (const method of methods) {
+        if (!pathItem?.[method]) continue;
+        const operation = pathItem[method];
+        items.push({
+          key: `${method.toUpperCase()} ${routePath}`,
+          method: method.toUpperCase(),
+          path: routePath,
+          operation,
+          requiresAuth: !(operation.security && operation.security.length === 0) && !((spec.security || []).length === 0),
+          tags: operationTags(operation)
+        });
+      }
+    }
+    return items;
+  }
+
+  function findEndpoint(key) {
+    return endpointItems.find(item => item.key === key) || null;
+  }
+
+  function renderEndpointList() {
+    const list = document.getElementById('endpointList');
+    const filter = String(document.getElementById('endpointFilter').value || '').trim().toLowerCase();
+    const filtered = endpointItems.filter(item => {
+      if (!filter) return true;
+      const haystack = `${item.method} ${item.path} ${item.tags.join(' ')} ${operationSummary(item.operation)}`.toLowerCase();
+      return haystack.includes(filter);
+    });
+
+    document.getElementById('endpointCountLabel').textContent = String(filtered.length);
+
+    if (!filtered.length) {
+      list.innerHTML = '<div class="empty-state">No hay endpoints que coincidan con el filtro.</div>';
+      return;
+    }
+
+    list.innerHTML = filtered.map(item => `
+      <button class="swagger-endpoint${item.key === selectedEndpointKey ? ' active' : ''}" onclick="selectEndpoint('${escapeJs(item.key)}')">
+        <div class="swagger-endpoint-top">
+          ${methodBadge(item.method)}
+          <span class="mono swagger-path">${escapeHtml(item.path)}</span>
+        </div>
+        <div class="swagger-endpoint-summary">${escapeHtml(operationSummary(item.operation))}</div>
+        <div class="inline-meta">
+          <span>${escapeHtml(item.tags.join(', '))}</span>
+          <span>${item.requiresAuth ? 'Bearer JWT' : 'Publico'}</span>
+        </div>
+      </button>
+    `).join('');
+  }
+
+  function buildDefaultBody(item) {
+    if (item.path === '/api/login') {
+      return JSON.stringify({ email: 'marvinjmartinez@gmail.com', password: '01978088' }, null, 2);
+    }
+    if (item.path === '/api/query') {
+      return JSON.stringify({ connectionName: 'EXCOMIN2026', sql: 'SELECT FIRST 5 * FROM BANCO' }, null, 2);
+    }
+    if (item.path === '/api/query/test') {
+      return JSON.stringify({ connectionId: 'mj01-fb-contab2026' }, null, 2);
+    }
+    if (item.method === 'POST' || item.method === 'PUT' || item.method === 'PATCH') {
+      return JSON.stringify({}, null, 2);
+    }
+    return '';
+  }
+
+  function responseCodes(operation) {
+    return Object.entries(operation.responses || {}).map(([code, info]) =>
+      `<div class="swagger-response-row"><span class="mono">${escapeHtml(code)}</span><span>${escapeHtml(info.description || '--')}</span></div>`
+    ).join('');
+  }
+
+  function renderEndpointDetail(item) {
+    const detail = document.getElementById('endpointDetail');
+    if (!item) {
+      detail.innerHTML = '<div class="empty-state">Seleccione un endpoint para ver detalle.</div>';
+      return;
+    }
+
+    const bodyDefault = buildDefaultBody(item);
+    detail.innerHTML = `
+      <div class="stack">
+        <div class="swagger-detail-header">
+          <div class="swagger-endpoint-top">
+            ${methodBadge(item.method)}
+            <span class="mono swagger-path">${escapeHtml(item.path)}</span>
+          </div>
+          <div class="inline-meta">
+            <span>${escapeHtml(item.tags.join(', '))}</span>
+            <span>${item.requiresAuth ? 'Bearer JWT requerido' : 'Sin autenticacion'}</span>
+          </div>
+        </div>
+        <div>
+          <div class="muted">Descripcion</div>
+          <p>${escapeHtml(operationSummary(item.operation))}</p>
+        </div>
+        <div>
+          <div class="muted">Respuestas</div>
+          <div class="stack">${responseCodes(item.operation)}</div>
+        </div>
+        <div>
+          <div class="muted">Path de prueba</div>
+          <input id="tryPathInput" class="inline-input" value="${escapeHtml(item.path)}" />
+        </div>
+        ${(item.method === 'POST' || item.method === 'PUT' || item.method === 'PATCH')
+          ? `<div>
+              <div class="muted">Request body</div>
+              <textarea id="tryBodyInput" class="swagger-body-input">${escapeHtml(bodyDefault)}</textarea>
+            </div>`
+          : ''}
+        <div class="action-row">
+          <button class="button-link" onclick="runEndpointTry('${escapeJs(item.key)}')">Try it</button>
+          <button class="button-secondary" onclick="fillExample('${escapeJs(item.key)}')">Ejemplo</button>
+        </div>
+        <div>
+          <div class="muted">Response</div>
+          <pre id="tryResponseOutput" class="code-block">Esperando prueba...</pre>
+        </div>
+      </div>
+    `;
+  }
+
+  function fillExample(key) {
+    const item = findEndpoint(key);
+    if (!item) return;
+    if (item.method === 'POST' || item.method === 'PUT' || item.method === 'PATCH') {
+      const input = document.getElementById('tryBodyInput');
+      if (input) input.value = buildDefaultBody(item);
+    }
+  }
+
+  async function runEndpointTry(key) {
+    const item = findEndpoint(key);
+    if (!item) return;
+
+    const responseBox = document.getElementById('tryResponseOutput');
+    const path = document.getElementById('tryPathInput').value.trim() || item.path;
+    const hasBody = item.method === 'POST' || item.method === 'PUT' || item.method === 'PATCH';
+
+    try {
+      let bodyText = '';
+      if (hasBody) {
+        bodyText = document.getElementById('tryBodyInput').value.trim();
+      }
+      const response = await fetch(BASE + path, {
+        method: item.method,
+        headers: apiHeaders(item.requiresAuth, hasBody),
+        body: hasBody ? bodyText : undefined
+      });
+      const raw = await response.text();
+      let parsed = raw;
+      try { parsed = JSON.parse(raw); } catch {}
+      responseBox.textContent = JSON.stringify({
+        status: response.status,
+        ok: response.ok,
+        body: parsed
+      }, null, 2);
+      if (response.ok) {
+        showSuccess(`${item.method} ${path} ejecutado.`);
+        hideError();
+      } else {
+        showError(`La prueba devolvio HTTP ${response.status}.`);
+      }
+    } catch (error) {
+      responseBox.textContent = error.message;
+      showError(`No se pudo ejecutar la prueba: ${error.message}`);
+    }
+  }
+
+  function selectEndpoint(key) {
+    selectedEndpointKey = key;
+    renderEndpointList();
+    renderEndpointDetail(findEndpoint(key));
+  }
+
+  async function loadDocs() {
+    document.getElementById('baseLabel').textContent = BASE;
+    try {
+      openapi = await fetchJsonOrThrow(BASE + '/openapi.api.json');
+      endpointItems = flattenOpenApi(openapi);
+      document.getElementById('openapiVersionLabel').textContent = `${openapi.openapi || '--'} / ${openapi.info?.version || '--'}`;
+      renderEndpointList();
+      if (!selectedEndpointKey && endpointItems.length) {
+        selectedEndpointKey = endpointItems[0].key;
+      }
+      renderEndpointDetail(findEndpoint(selectedEndpointKey));
+      hideError();
+    } catch (error) {
+      showError('No se pudo cargar el contrato OpenAPI: ' + error.message);
+    }
+  }
+
+  document.getElementById('endpointFilter').addEventListener('input', renderEndpointList);
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    document.getElementById('tokenInput').value = token;
+    token = await autoLoadToken();
+    if (token) document.getElementById('tokenInput').value = token;
+    await loadDocs();
+  });
+</script>
+</body>
+</html>

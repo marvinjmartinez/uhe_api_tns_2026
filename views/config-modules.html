@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Modulos API - TNS Local</title>
+  <link rel="stylesheet" href="shared.css">
+  <script src="shared.js"></script>
+</head>
+<body>
+<nav></nav>
+<main>
+  <section class="page-hero">
+    <div class="hero-panel">
+      <div class="hero-kicker">Configuracion / Modulos</div>
+      <h1>Componentes del servicio</h1>
+      <p>Habilite o deshabilite modulos del servicio y vea el contexto base del store local.</p>
+    </div>
+    <div class="side-panel stack">
+      <div><div class="muted">SQLite</div><div class="mono" id="sqliteLabel">--</div></div>
+      <div><div class="muted">Version</div><div class="mono" id="versionLabel">--</div></div>
+    </div>
+  </section>
+
+  <div id="configSectionTabs"></div>
+
+  <div class="token-banner">
+    <label for="tokenInput">JWT Token</label>
+    <input id="tokenInput" type="password" placeholder="eyJhbGciOiJI..." />
+    <button onclick="saveToken()">Guardar</button>
+    <span id="tokenStatus"></span>
+  </div>
+
+  <div id="errorDiv" class="error-msg" style="display:none"></div>
+  <div id="successDiv" class="success-msg" style="display:none"></div>
+
+  <section class="metric-grid">
+    <div class="metric-tile"><strong>Modulos</strong><span id="metricModules">--</span></div>
+    <div class="metric-tile"><strong>Activos</strong><span id="metricEnabled">--</span></div>
+    <div class="metric-tile"><strong>Instalacion</strong><span id="metricInstallId">--</span></div>
+  </section>
+
+  <section class="panel">
+    <h2>Modulos</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Modulo</th><th>Estado</th><th>Accion</th></tr></thead>
+        <tbody id="moduleRows"><tr><td colspan="3">Cargando...</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+<script>
+  const BASE = resolveApiBase();
+  let token = getStoredToken();
+
+  function saveToken() {
+    token = saveStoredToken(document.getElementById('tokenInput').value);
+    setTokenStatus(token ? 'Token guardado.' : 'Token eliminado.');
+    loadModules();
+  }
+
+  function showError(message) {
+    const div = document.getElementById('errorDiv');
+    div.style.display = 'block';
+    div.textContent = message;
+  }
+
+  function hideError() {
+    document.getElementById('errorDiv').style.display = 'none';
+  }
+
+  function showSuccess(message) {
+    const div = document.getElementById('successDiv');
+    div.style.display = 'block';
+    div.textContent = message;
+    setTimeout(() => { div.style.display = 'none'; }, 2500);
+  }
+
+  async function apiJson(path, options = {}) {
+    const headers = {
+      ...buildAuthHeaders(token),
+      ...(options.body ? { 'Content-Type': 'application/json' } : {})
+    };
+    return fetchJsonOrThrow(BASE + path, { ...options, headers });
+  }
+
+  function renderModules(items) {
+    const tbody = document.getElementById('moduleRows');
+    tbody.innerHTML = items.map(item => `
+      <tr>
+        <td>${escapeHtml(item.name || item.key)}</td>
+        <td>${renderBadge(item.enabled ? 'ENABLED' : 'DISABLED')}</td>
+        <td><button class="button-secondary" onclick="toggleModule('${escapeJs(item.key)}', ${item.enabled ? 'false' : 'true'})">${item.enabled ? 'Desactivar' : 'Activar'}</button></td>
+      </tr>
+    `).join('');
+  }
+
+  async function toggleModule(key, enabled) {
+    try {
+      await apiJson(`/api/config/modules/${encodeURIComponent(key)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ enabled })
+      });
+      showSuccess(`Modulo ${key} actualizado.`);
+      loadModules();
+    } catch (error) {
+      if (handleAuthFailure(error, 'login.html')) return;
+      showError('No se pudo actualizar el modulo: ' + error.message);
+    }
+  }
+
+  async function loadModules() {
+    if (!token) {
+      showError('Inicie sesion para administrar modulos.');
+      return;
+    }
+    try {
+      const data = await apiJson('/api/config/local');
+      hideError();
+      const modules = data.modules || [];
+      document.getElementById('sqliteLabel').textContent = data.store?.dbPath || '--';
+      document.getElementById('versionLabel').textContent = data.system?.version || '--';
+      document.getElementById('metricModules').textContent = String(modules.length);
+      document.getElementById('metricEnabled').textContent = String(modules.filter(item => item.enabled).length);
+      document.getElementById('metricInstallId').textContent = data.system?.installationId || '--';
+      renderModules(modules);
+    } catch (error) {
+      if (handleAuthFailure(error, 'login.html')) return;
+      showError('No se pudieron cargar los modulos: ' + error.message);
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    document.getElementById('tokenInput').value = token;
+    token = await autoLoadToken();
+    if (token) document.getElementById('tokenInput').value = token;
+    loadModules();
+  });
+</script>
+</body>
+</html>

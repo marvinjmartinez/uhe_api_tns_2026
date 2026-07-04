@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "description": "Catalogo de conexiones para /api/query por empresa y motor",
+  "connections": [
+    {
+      "id": "MJEXCOMIN2026DEV01",
+      "name": "EXCOMIN2026 DEV",
+      "active": true,
+      "engine": "firebird",
+      "host": "127.0.0.1",
+      "port": 3050,
+      "dbPath": "C:\\Datos TNS\\TNS2026\\CONTAB2026\\EXCOMIN2026.GDB",
+      "user": "SYSDBA",
+      "password": "masterkey",
+      "timeoutMs": 12000,
+      "allowedOperations": [
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE"
+      ]
+    }
+  ]
+}

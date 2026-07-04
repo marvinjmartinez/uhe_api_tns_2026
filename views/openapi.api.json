@@ -1,0 +1,49 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "TNS Local API Query",
+    "version": "1.0.0",
+    "description": "Contrato del servicio API Query en puerto 8086."
+  },
+  "servers": [
+    { "url": "http://127.0.0.1:8086", "description": "Servicio API Query" }
+  ],
+  "tags": [
+    { "name": "Core" },
+    { "name": "Config" },
+    { "name": "Connections" },
+    { "name": "Query" },
+    { "name": "Connectivity" },
+    { "name": "Metrics" },
+    { "name": "Audit" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "JWT" }
+    }
+  },
+  "security": [{ "bearerAuth": [] }],
+  "paths": {
+    "/api/health": { "get": { "tags": ["Core"], "security": [], "responses": { "200": { "description": "Salud del servicio" } } } },
+    "/api/token": { "get": { "tags": ["Core"], "security": [], "responses": { "200": { "description": "Token local de respaldo" }, "404": { "description": "Deshabilitado" } } } },
+    "/api/login": { "post": { "tags": ["Core"], "security": [], "description": "Autentica usuario y devuelve JWT.", "responses": { "200": { "description": "Login exitoso" }, "401": { "description": "Credenciales invalidas" } } } },
+    "/api/logout": { "post": { "tags": ["Core"], "responses": { "200": { "description": "Sesion cerrada" } } } },
+    "/api/auth/users": { "get": { "tags": ["Config"], "responses": { "200": { "description": "Lista usuarios autorizados" } } }, "post": { "tags": ["Config"], "responses": { "201": { "description": "Usuario creado" } } } },
+    "/api/auth/users/{email}": { "get": { "tags": ["Config"], "responses": { "200": { "description": "Usuario autorizado" } } }, "put": { "tags": ["Config"], "responses": { "200": { "description": "Usuario actualizado" } } }, "delete": { "tags": ["Config"], "responses": { "200": { "description": "Usuario eliminado" } } } },
+    "/api/auth/sessions": { "get": { "tags": ["Config"], "responses": { "200": { "description": "Lista sesiones activas o revocadas" } } } },
+    "/api/auth/sessions/{sessionId}": { "delete": { "tags": ["Config"], "responses": { "200": { "description": "Sesion revocada" } } } },
+    "/api/query": { "post": { "tags": ["Query"], "description": "Ejecuta una consulta usando bearer token, connectionName y sql.", "responses": { "200": { "description": "Consulta ejecutada" } } } },
+    "/api/query/test": { "post": { "tags": ["Query"], "description": "Prueba una conexion usando connectionId, connectionName o dbPath/databasePath.", "responses": { "200": { "description": "Prueba de query" } } } },
+    "/api/query/log": { "get": { "tags": ["Query"], "responses": { "200": { "description": "Bitacora de queries" } } } },
+    "/api/connections": { "get": { "tags": ["Connections"], "responses": { "200": { "description": "Lista conexiones" } } }, "post": { "tags": ["Connections"], "responses": { "201": { "description": "Conexion creada" } } } },
+    "/api/connections/{id}": { "get": { "tags": ["Connections"], "responses": { "200": { "description": "Conexion" } } }, "put": { "tags": ["Connections"], "responses": { "200": { "description": "Conexion actualizada" } } }, "delete": { "tags": ["Connections"], "responses": { "200": { "description": "Conexion eliminada" } } } },
+    "/api/config/local": { "get": { "tags": ["Config"], "responses": { "200": { "description": "Configuracion local" } } } },
+    "/api/config/settings/{key}": { "put": { "tags": ["Config"], "responses": { "200": { "description": "Clave actualizada" } } } },
+    "/api/config/modules": { "get": { "tags": ["Config"], "responses": { "200": { "description": "Modulos" } } } },
+    "/api/config/modules/{module}": { "put": { "tags": ["Config"], "responses": { "200": { "description": "Modulo actualizado" } } } },
+    "/api/config/audit-log": { "get": { "tags": ["Audit"], "responses": { "200": { "description": "Auditoria" } } } },
+    "/api/services/status": { "get": { "tags": ["Connectivity"], "responses": { "200": { "description": "Estado de servicios internos" } } } },
+    "/api/connectivity/status": { "get": { "tags": ["Connectivity"], "responses": { "200": { "description": "Conectividad" } } } },
+    "/api/metrics": { "get": { "tags": ["Metrics"], "responses": { "200": { "description": "Metricas" } } } }
+  }
+}

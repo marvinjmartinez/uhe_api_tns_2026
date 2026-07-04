@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Salud API - TNS Local</title>
+  <link rel="stylesheet" href="shared.css">
+  <script src="shared.js"></script>
+</head>
+<body>
+<nav></nav>
+<main>
+  <section class="page-hero">
+    <div class="hero-panel">
+      <div class="hero-kicker">Observabilidad API</div>
+      <h1>Salud y conectividad</h1>
+      <p>Lectura rapida de salud, conectividad SQLite y estado de las conexiones registradas para la app de API Query.</p>
+    </div>
+  </section>
+
+  <div class="token-banner">
+    <label for="tokenInput">JWT Token</label>
+    <input id="tokenInput" type="password" placeholder="eyJhbGciOiJI..." />
+    <button onclick="saveToken()">Guardar</button>
+    <span id="tokenStatus"></span>
+  </div>
+
+  <div id="errorDiv" class="error-msg" style="display:none"></div>
+
+  <section class="metric-grid">
+    <div class="metric-tile"><strong>Health</strong><span id="healthValue">--</span></div>
+    <div class="metric-tile"><strong>SQLite</strong><span id="sqliteValue">--</span></div>
+    <div class="metric-tile"><strong>Conexiones</strong><span id="connectionsValue">--</span></div>
+    <div class="metric-tile"><strong>Base</strong><span id="baseValue" style="font-size:14px">--</span></div>
+  </section>
+
+  <section class="panel">
+    <h2>Detalle</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Chequeo</th><th>Estado</th><th>Detalle</th></tr></thead>
+        <tbody id="checkRows"><tr><td colspan="3">Cargando...</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+<script>
+  const BASE = resolveApiBase();
+  let token = getStoredToken();
+
+  function saveToken() {
+    token = saveStoredToken(document.getElementById('tokenInput').value);
+    setTokenStatus('Token guardado.');
+    loadAll();
+  }
+
+  function showError(message) {
+    const div = document.getElementById('errorDiv');
+    div.style.display = 'block';
+    div.textContent = message;
+  }
+
+  function hideError() {
+    document.getElementById('errorDiv').style.display = 'none';
+  }
+
+  async function loadAll() {
+    if (!token) {
+      showError('Pegue un token JWT para validar conectividad.');
+      return;
+    }
+    try {
+      const [health, connectivity] = await Promise.all([
+        fetchJsonOrThrow(BASE + '/api/health'),
+        fetchJsonOrThrow(BASE + '/api/connectivity/status', { headers: buildAuthHeaders(token) })
+      ]);
+      hideError();
+      document.getElementById('healthValue').innerHTML = renderBadge(health.healthLevel || 'OK');
+      document.getElementById('sqliteValue').innerHTML = renderBadge(connectivity.sqlite?.status || 'OK');
+      document.getElementById('connectionsValue').textContent = String((connectivity.connections || []).length);
+      document.getElementById('baseValue').textContent = BASE;
+      const checks = [
+        ['Health endpoint', health.healthLevel || 'OK', health.serviceName || '--'],
+        ['SQLite local', connectivity.sqlite?.status || 'OK', connectivity.sqlite?.dbPath || '--'],
+        ['API Query', health.apiQueryEnabled ? 'ENABLED' : 'DISABLED', 'Controlado por claves y modulos'],
+        ['Conexiones', 'INFO', `${(connectivity.connections || []).length} registradas`]
+      ];
+      document.getElementById('checkRows').innerHTML = checks.map(([name, state, detail]) => `
+        <tr>
+          <td>${escapeHtml(name)}</td>
+          <td>${renderBadge(state)}</td>
+          <td>${escapeHtml(detail)}</td>
+        </tr>
+      `).join('');
+    } catch (error) {
+      showError('No se pudo cargar la salud del servicio: ' + error.message);
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    document.getElementById('tokenInput').value = token;
+    token = await autoLoadToken();
+    if (token) document.getElementById('tokenInput').value = token;
+    loadAll();
+  });
+</script>
+</body>
+</html>

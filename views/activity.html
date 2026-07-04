@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Actividad API - TNS Local</title>
+  <link rel="stylesheet" href="shared.css">
+  <script src="shared.js"></script>
+</head>
+<body>
+<nav></nav>
+<main>
+  <section class="page-hero">
+    <div class="hero-panel">
+      <div class="hero-kicker">Actividad API</div>
+      <h1>Historico total de actividad</h1>
+      <p>Consolida ejecuciones SQL, eventos de sesion y cambios administrativos auditados en la API.</p>
+    </div>
+    <div class="side-panel stack">
+      <div><div class="muted">Ultimo query</div><div class="mono" id="lastQueryLabel">--</div></div>
+      <div><div class="muted">Ultimo evento</div><div class="mono" id="lastAuditLabel">--</div></div>
+    </div>
+  </section>
+
+  <div id="configSectionTabs"></div>
+
+  <div class="token-banner">
+    <label for="tokenInput">JWT Token</label>
+    <input id="tokenInput" type="password" placeholder="eyJhbGciOiJI..." />
+    <button onclick="saveToken()">Guardar</button>
+    <span id="tokenStatus"></span>
+  </div>
+
+  <div id="errorDiv" class="error-msg" style="display:none"></div>
+
+  <section class="metric-grid">
+    <div class="metric-tile"><strong>Queries cargados</strong><span id="metricQueries">--</span></div>
+    <div class="metric-tile"><strong>OK</strong><span id="metricOk">--</span></div>
+    <div class="metric-tile"><strong>Fallidos</strong><span id="metricFailed">--</span></div>
+    <div class="metric-tile"><strong>Eventos auditados</strong><span id="metricAudit">--</span></div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-heading">
+      <h2>Filtros de query log</h2>
+    </div>
+    <div class="action-row">
+      <input id="searchInput" class="inline-input" placeholder="Buscar por SQL, conexion o error">
+      <select id="statusFilter" class="inline-input">
+        <option value="">Todos los estados</option>
+        <option value="ok">OK</option>
+        <option value="error">Error</option>
+      </select>
+      <input id="limitInput" class="inline-input" type="number" min="10" max="500" value="100">
+      <button class="button-secondary" onclick="loadActivity()">Aplicar</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-heading">
+      <h2>Bitacora de queries</h2>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Fecha</th><th>Estado</th><th>Tipo</th><th>Conexion</th><th>Motor</th><th>Duracion</th><th>Rows</th><th>SQL / Error</th></tr></thead>
+        <tbody id="queryRows"><tr><td colspan="8">Cargando...</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-heading">
+      <h2>Auditoria total</h2>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Fecha</th><th>Evento</th><th>Anterior</th><th>Nuevo</th><th>Usuario</th><th>IP</th></tr></thead>
+        <tbody id="auditRows"><tr><td colspan="6">Cargando...</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+<script>
+  const BASE = resolveApiBase();
+  let token = getStoredToken();
+
+  function saveToken() {
+    token = saveStoredToken(document.getElementById('tokenInput').value);
+    setTokenStatus(token ? 'Token guardado.' : 'Token eliminado.');
+    loadActivity();
+  }
+
+  function showError(message) {
+    const div = document.getElementById('errorDiv');
+    div.style.display = 'block';
+    div.textContent = message;
+  }
+
+  function hideError() {
+    document.getElementById('errorDiv').style.display = 'none';
+  }
+
+  async function apiJson(path, options = {}) {
+    const headers = {
+      ...buildAuthHeaders(token),
+      ...(options.body ? { 'Content-Type': 'application/json' } : {})
+    };
+    return fetchJsonOrThrow(BASE + path, { ...options, headers });
+  }
+
+  function renderQueryRows(items) {
+    const tbody = document.getElementById('queryRows');
+    tbody.innerHTML = items.map(item => `
+      <tr>
+        <td>${escapeHtml(formatDateTime(item.ts))}</td>
+        <td>${renderBadge(item.status || '--')}</td>
+        <td>${escapeHtml(item.type || '--')}</td>
+        <td>${escapeHtml(item.connectionName || item.connectionId || '--')}</td>
+        <td>${escapeHtml(item.engine || '--')}</td>
+        <td>${escapeHtml(String(item.durationMs ?? '--'))}</td>
+        <td>${escapeHtml(String(item.rows ?? '--'))}</td>
+        <td><div class="mono">${escapeHtml(item.error || item.sql || '--')}</div></td>
+      </tr>
+    `).join('');
+  }
+
+  function renderAuditRows(items) {
+    const tbody = document.getElementById('auditRows');
+    tbody.innerHTML = items.map(item => `
+      <tr>
+        <td>${escapeHtml(formatDateTime(item.createdAt))}</td>
+        <td class="mono">${escapeHtml(item.settingKey || '--')}</td>
+        <td>${escapeHtml(item.oldValue || '--')}</td>
+        <td>${escapeHtml(item.newValue || '--')}</td>
+        <td>${escapeHtml(item.userName || '--')}</td>
+        <td>${escapeHtml(item.ipAddress || '--')}</td>
+      </tr>
+    `).join('');
+  }
+
+  async function loadActivity() {
+    if (!token) {
+      showError('Inicie sesion para revisar la actividad de la API.');
+      return;
+    }
+    try {
+      const search = encodeURIComponent(document.getElementById('searchInput').value.trim());
+      const status = encodeURIComponent(document.getElementById('statusFilter').value);
+      const limit = Math.max(10, Math.min(500, Number(document.getElementById('limitInput').value) || 100));
+      const [queryLog, auditLog] = await Promise.all([
+        apiJson(`/api/query/log?limit=${limit}&status=${status}&search=${search}`),
+        apiJson(`/api/config/audit-log?limit=${limit}`)
+      ]);
+      hideError();
+      const queryItems = queryLog.entries || [];
+      const auditItems = auditLog.items || [];
+      document.getElementById('metricQueries').textContent = String(queryItems.length);
+      document.getElementById('metricOk').textContent = String(queryItems.filter(item => String(item.status).toLowerCase() === 'ok').length);
+      document.getElementById('metricFailed').textContent = String(queryItems.filter(item => String(item.status).toLowerCase() !== 'ok').length);
+      document.getElementById('metricAudit').textContent = String(auditItems.length);
+      document.getElementById('lastQueryLabel').textContent = queryItems[0]?.ts ? formatDateTime(queryItems[0].ts) : '--';
+      document.getElementById('lastAuditLabel').textContent = auditItems[0]?.createdAt ? formatDateTime(auditItems[0].createdAt) : '--';
+      renderQueryRows(queryItems);
+      renderAuditRows(auditItems);
+    } catch (error) {
+      if (handleAuthFailure(error, 'login.html')) return;
+      showError('No se pudo cargar la actividad: ' + error.message);
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    document.getElementById('tokenInput').value = token;
+    token = await autoLoadToken();
+    if (token) document.getElementById('tokenInput').value = token;
+    loadActivity();
+  });
+</script>
+</body>
+</html>

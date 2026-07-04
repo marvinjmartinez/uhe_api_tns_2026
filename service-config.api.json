@@ -1,0 +1,46 @@
+{
+  "service": {
+    "name": "TNS Local API Query Service",
+    "role": "api",
+    "defaultPort": 8086,
+    "defaultHost": "127.0.0.1",
+    "envFile": ".env.api"
+  },
+  "requiredEnv": {
+    "core": [
+      "SERVICE_ROLE",
+      "SERVICE_NAME",
+      "PORT",
+      "HOST",
+      "NETWORK_MODE"
+    ],
+    "security": [
+      "TNS_SECRET",
+      "API_QUERY_ENABLED",
+      "API_QUERY_REQUIRE_CONNECTION_NAME",
+      "API_QUERY_ALLOWED_OPERATIONS"
+    ],
+    "firebird": [
+      "FIREBIRD_HOST",
+      "FIREBIRD_PORT",
+      "FIREBIRD_USER",
+      "FIREBIRD_PASSWORD"
+    ],
+    "runtime": [
+      "API_CONNECTIONS_FILE",
+      "LOCAL_CONFIG_DB",
+      "SYNC_LOG_LEVEL",
+      "SYNC_LOG_DIR",
+      "DIAG_BASE_URL"
+    ]
+  },
+  "optionalEnv": {
+    "api": [
+      "JWT_BACKUP",
+      "JWT_EXPIRES_IN",
+      "SESSION_IDLE_MINUTES",
+      "API_KEY_MJ01",
+      "DASHBOARD_REFRESH_ON_DEMAND"
+    ]
+  }
+}

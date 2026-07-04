@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login API - TNS Local</title>
+  <link rel="stylesheet" href="shared.css">
+  <script src="shared.js"></script>
+</head>
+<body>
+<nav></nav>
+<main>
+  <section class="page-hero">
+    <div class="hero-panel">
+      <div class="hero-kicker">Acceso seguro</div>
+      <h1>Iniciar sesion</h1>
+      <p>Acceda primero con su usuario y clave. Despues del login podra entrar al dashboard, documentacion, configuracion y herramientas administrativas de la API.</p>
+    </div>
+    <div class="side-panel stack">
+      <div><div class="muted">Base API</div><div class="mono" id="baseLabel">--</div></div>
+      <div><div class="muted">Sesion</div><div class="mono" id="sessionLabel">Sin autenticar</div></div>
+    </div>
+  </section>
+
+  <div id="errorDiv" class="error-msg" style="display:none"></div>
+  <div id="successDiv" class="success-msg" style="display:none"></div>
+
+  <section class="two-col">
+    <section class="panel">
+      <h2>Credenciales</h2>
+      <form id="loginForm" class="form-stack">
+        <div class="form-grid">
+          <label>Email
+            <input id="loginEmail" type="email" autocomplete="username" placeholder="marvinjmartinez@gmail.com" required>
+          </label>
+          <label>Clave
+            <input id="loginPassword" type="password" autocomplete="current-password" required>
+          </label>
+        </div>
+        <div class="action-row">
+          <button type="submit" class="button-link">Entrar al dashboard</button>
+          <button type="button" class="button-secondary" onclick="clearSession()">Limpiar sesion</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2>Token activo</h2>
+      <div class="token-banner" style="margin-bottom:0">
+        <label for="tokenInput">JWT Token</label>
+        <input id="tokenInput" type="password" placeholder="eyJhbGciOiJI..." />
+        <button onclick="saveManualToken()">Guardar</button>
+        <span id="tokenStatus"></span>
+      </div>
+      <div class="inline-meta">
+        <span>El token se guarda en navegador y cookie para proteger las vistas.</span>
+      </div>
+    </section>
+  </section>
+</main>
+<script>
+  const BASE = resolveApiBase();
+  let token = getStoredToken();
+
+  function decodeJwtPayload(jwtToken) {
+    try {
+      const payload = String(jwtToken || '').split('.')[1];
+      if (!payload) return null;
+      const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
+      return JSON.parse(atob(normalized));
+    } catch {
+      return null;
+    }
+  }
+
+  function showError(message) {
+    const div = document.getElementById('errorDiv');
+    div.style.display = 'block';
+    div.textContent = message;
+  }
+
+  function hideError() {
+    document.getElementById('errorDiv').style.display = 'none';
+  }
+
+  function showSuccess(message) {
+    const div = document.getElementById('successDiv');
+    div.style.display = 'block';
+    div.textContent = message;
+    setTimeout(() => { div.style.display = 'none'; }, 2500);
+  }
+
+  function renderSessionLabel() {
+    document.getElementById('baseLabel').textContent = BASE;
+    const payload = decodeJwtPayload(token);
+    document.getElementById('sessionLabel').textContent = payload?.email || 'Sin autenticar';
+  }
+
+  function saveManualToken() {
+    token = saveStoredToken(document.getElementById('tokenInput').value);
+    renderSessionLabel();
+    setTokenStatus(token ? 'Token guardado.' : 'Token eliminado.');
+    if (token) {
+      showSuccess('Token guardado. Ya puede entrar al dashboard.');
+    }
+  }
+
+  function clearSession() {
+    clearStoredToken();
+    token = '';
+    document.getElementById('tokenInput').value = '';
+    document.getElementById('loginPassword').value = '';
+    renderSessionLabel();
+    setTokenStatus('Sesion eliminada.');
+  }
+
+  document.getElementById('loginForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    try {
+      const body = {
+        email: document.getElementById('loginEmail').value.trim(),
+        password: document.getElementById('loginPassword').value
+      };
+      const data = await fetchJsonOrThrow(BASE + '/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      token = saveStoredToken(data.token || '');
+      document.getElementById('tokenInput').value = token;
+      renderSessionLabel();
+      setTokenStatus('Sesion iniciada.');
+      hideError();
+      showSuccess(`Bienvenido ${data.user?.email || body.email}.`);
+      globalThis.location.href = 'index.html';
+    } catch (error) {
+      showError('No se pudo iniciar sesion: ' + error.message);
+    }
+  });
+
+  document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('tokenInput').value = token;
+    renderSessionLabel();
+    if (token) setTokenStatus('Token cargado desde navegador.');
+  });
+</script>
+</body>
+</html>

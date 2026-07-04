@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claves API - TNS Local</title>
+  <link rel="stylesheet" href="shared.css">
+  <script src="shared.js"></script>
+</head>
+<body>
+<nav></nav>
+<main>
+  <section class="page-hero">
+    <div class="hero-panel">
+      <div class="hero-kicker">Configuracion / Claves</div>
+      <h1>Parametros locales</h1>
+      <p>Edite las claves del servicio y vea los cambios recientes asociados a configuracion.</p>
+    </div>
+    <div class="side-panel stack">
+      <div><div class="muted">Claves</div><div class="mono" id="settingsCountLabel">--</div></div>
+    </div>
+  </section>
+
+  <div id="configSectionTabs"></div>
+
+  <div class="token-banner">
+    <label for="tokenInput">JWT Token</label>
+    <input id="tokenInput" type="password" placeholder="eyJhbGciOiJI..." />
+    <button onclick="saveToken()">Guardar</button>
+    <span id="tokenStatus"></span>
+  </div>
+
+  <div id="errorDiv" class="error-msg" style="display:none"></div>
+  <div id="successDiv" class="success-msg" style="display:none"></div>
+
+  <section class="panel">
+    <h2>Claves locales</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Clave</th><th>Valor</th><th>Accion</th></tr></thead>
+        <tbody id="settingRows"><tr><td colspan="3">Cargando...</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-heading">
+      <h2>Auditoria reciente</h2>
+      <a class="button-secondary" href="activity.html">Ver actividad completa</a>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Evento</th><th>Anterior</th><th>Nuevo</th><th>Usuario</th><th>Fecha</th></tr></thead>
+        <tbody id="auditRows"><tr><td colspan="5">Cargando...</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+<script>
+  const BASE = resolveApiBase();
+  let token = getStoredToken();
+
+  function saveToken() {
+    token = saveStoredToken(document.getElementById('tokenInput').value);
+    setTokenStatus(token ? 'Token guardado.' : 'Token eliminado.');
+    loadSettings();
+  }
+
+  function showError(message) {
+    const div = document.getElementById('errorDiv');
+    div.style.display = 'block';
+    div.textContent = message;
+  }
+
+  function hideError() {
+    document.getElementById('errorDiv').style.display = 'none';
+  }
+
+  function showSuccess(message) {
+    const div = document.getElementById('successDiv');
+    div.style.display = 'block';
+    div.textContent = message;
+    setTimeout(() => { div.style.display = 'none'; }, 2500);
+  }
+
+  async function apiJson(path, options = {}) {
+    const headers = {
+      ...buildAuthHeaders(token),
+      ...(options.body ? { 'Content-Type': 'application/json' } : {})
+    };
+    return fetchJsonOrThrow(BASE + path, { ...options, headers });
+  }
+
+  function renderSettings(settings) {
+    document.getElementById('settingsCountLabel').textContent = String(settings.length);
+    const tbody = document.getElementById('settingRows');
+    tbody.innerHTML = settings.map(item => `
+      <tr>
+        <td class="mono">${escapeHtml(item.key)}</td>
+        <td><input id="setting-${escapeHtml(item.key)}" value="${escapeHtml(item.value ?? '')}" /></td>
+        <td><button class="button-secondary" onclick="saveSetting('${escapeJs(item.key)}')">Guardar</button></td>
+      </tr>
+    `).join('');
+  }
+
+  function renderAudit(items) {
+    const tbody = document.getElementById('auditRows');
+    tbody.innerHTML = items.map(item => `
+      <tr>
+        <td class="mono">${escapeHtml(item.settingKey || '--')}</td>
+        <td>${escapeHtml(item.oldValue || '--')}</td>
+        <td>${escapeHtml(item.newValue || '--')}</td>
+        <td>${escapeHtml(item.userName || '--')}</td>
+        <td>${escapeHtml(formatDateTime(item.createdAt))}</td>
+      </tr>
+    `).join('');
+  }
+
+  async function saveSetting(key) {
+    try {
+      const value = document.getElementById(`setting-${key}`).value;
+      await apiJson(`/api/config/settings/${encodeURIComponent(key)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ value })
+      });
+      showSuccess(`Clave ${key} actualizada.`);
+      loadSettings();
+    } catch (error) {
+      if (handleAuthFailure(error, 'login.html')) return;
+      showError('No se pudo guardar la clave: ' + error.message);
+    }
+  }
+
+  async function loadSettings() {
+    if (!token) {
+      showError('Inicie sesion para administrar claves.');
+      return;
+    }
+    try {
+      const [config, audit] = await Promise.all([
+        apiJson('/api/config/local'),
+        apiJson('/api/config/audit-log?limit=25')
+      ]);
+      hideError();
+      renderSettings(config.settings || []);
+      renderAudit(audit.items || []);
+    } catch (error) {
+      if (handleAuthFailure(error, 'login.html')) return;
+      showError('No se pudieron cargar las claves: ' + error.message);
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    document.getElementById('tokenInput').value = token;
+    token = await autoLoadToken();
+    if (token) document.getElementById('tokenInput').value = token;
+    loadSettings();
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+{
+  "name": "tns-local-api-service",
+  "version": "1.0.0",
+  "description": "Servicio local TNS para API Query independiente",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.1",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.0",
+    "mysql2": "^3.11.0",
+    "mssql": "^11.0.1",
+    "node-firebird": "^0.8.0",
+    "pg": "^8.20.0",
+    "sql.js": "^1.14.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

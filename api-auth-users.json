@@ -1,0 +1,10 @@
+{
+  "users": [
+    {
+      "email": "marvinjmartinez@gmail.com",
+      "role": "admin",
+      "active": true,
+      "passwordHash": "scrypt$dc3c3f143317e871cafbeb07a83b2934$9cfebefc3ad25823a03f17f7fc6aa66576ec0224068ec0b081b0c81b05b734f6deb3c83162c77c441bec85e7fa2671332ea489dfbc2fbe351b4716f2d4aa1118"
+    }
+  ]
+}
